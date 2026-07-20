@@ -4,15 +4,10 @@ Backend API (Flask + PostgreSQL)
 
 Run locally:
     pip install -r requirements.txt
-    export DATABASE_URL=postgresql://...
-    export MISTRAL_API_KEY=...
     python app.py
 
 Deploy on Render:
     Start command: gunicorn app:app
-    Required env vars: DATABASE_URL, MISTRAL_API_KEY, FRONTEND_ORIGIN
-    Optional env vars: MISTRAL_MODEL, SECURITY_PASSCODE, FRONTDESK_PASSCODE,
-                        ADMIN_PASSCODE (defaults are used if not set — CHANGE THESE)
 """
 
 import os
@@ -27,11 +22,10 @@ from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # ============================================================
-# Config — everything sensitive comes from environment variables.
-# Nothing secret is ever hardcoded in this file.
+# Config
 # ============================================================
-DATABASE_URL = os.environ.get("DATABASE_URL")
-MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY")
+DATABASE_URL = "postgresql://rexvmsdatabase_user:4wJYy8k1BBFmpa4RMnTlwxFsXDzfXUAr@dpg-d9f2qkdaeets73cah5u0-a/rexvmsdatabase"
+MISTRAL_API_KEY = "yjvknUyDmAP6SKLQAUtqM5FH65cP69Id"
 MISTRAL_MODEL = os.environ.get("MISTRAL_MODEL", "mistral-small-latest")
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")  # set to your Vercel URL in production
 
