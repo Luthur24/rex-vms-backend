@@ -606,10 +606,20 @@ def force_logout(session_id):
     if not session:
         return jsonify({"error": "Session not found."}), 404
     cur.execute("UPDATE sessions SET active = FALSE WHERE id = %s", (session_id,))
+    # FIX: PostgreSQL doesn't support ORDER BY / LIMIT directly on UPDATE
+    # (that's MySQL syntax). Wrapped in a subquery instead — SELECT supports
+    # ORDER BY/LIMIT, so it picks the right row first, then UPDATE targets
+    # that row by id. This was silently breaking the whole request before,
+    # which also meant the "UPDATE sessions SET active = FALSE" line above
+    # never actually committed either — the transaction failed and rolled
+    # back entirely, so the session was never really deactivated.
     cur.execute("""
         UPDATE login_history SET logged_out_at = now()
-        WHERE portal = %s AND display_name = %s AND logged_out_at IS NULL
-        ORDER BY logged_in_at DESC LIMIT 1
+        WHERE id = (
+            SELECT id FROM login_history
+            WHERE portal = %s AND display_name = %s AND logged_out_at IS NULL
+            ORDER BY logged_in_at DESC LIMIT 1
+        )
     """, (session["portal"], session["display_name"]))
     db.commit()
     return jsonify({"ok": True})
