@@ -194,10 +194,6 @@ python app.py
 
 Security
 
-Production credentials must never be committed to source control.
-
-Portal passcodes, database credentials, API keys, session secrets, and other sensitive configuration should be supplied through environment variables or a dedicated secret-management system.
-
 The backend itself hashes portal passcodes before storing them in the database and validates them during authentication.
 
 Project Context
