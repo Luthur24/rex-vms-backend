@@ -24,18 +24,23 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # ============================================================
 # Config
 # ============================================================
-DATABASE_URL = "postgres://avnadmin:AVNS_q_zR9FvhvJHJGbiL0zp@pg-235735e2-ub7499710-7253.j.aivencloud.com:11602/defaultdb?sslmode=require"
-MISTRAL_API_KEY = "uZIGi6VCzkcJ0i5X5mYYc0Nr1XWX21YR"
+DATABASE_URL = os.environ.get("DATABASE_URL")
+MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY")
 MISTRAL_MODEL = os.environ.get("MISTRAL_MODEL", "mistral-small-latest")
-FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")  # set to your Vercel URL in production
+FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN")
 
-# Fallback default passcodes — ONLY used the very first time the app runs,
-# to seed the database. Change them immediately from the Admin portal after
-# your first login. Never trust these in a real deployment.
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is required.")
+if not FRONTEND_ORIGIN:
+    raise RuntimeError("FRONTEND_ORIGIN environment variable is required (e.g. https://rex-vms.vercel.app).")
+
+# Initial passcodes — ONLY read when a portal has no passcode in the database yet
+# (first run). After that, passcodes are managed from the Admin portal and these
+# variables are ignored.
 DEFAULT_PASSCODES = {
-    "security": os.environ.get("SECURITY_PASSCODE", "Security#2026"),
-    "frontdesk": os.environ.get("FRONTDESK_PASSCODE", "FrontDesk#2026"),
-    "admin": os.environ.get("ADMIN_PASSCODE", "Admin#2026"),
+    "security": os.environ.get("SECURITY_PASSCODE"),
+    "frontdesk": os.environ.get("FRONTDESK_PASSCODE"),
+    "admin": os.environ.get("ADMIN_PASSCODE"),
 }
 
 DEFAULT_CONCURRENCY = {"security": 1, "frontdesk": 2, "admin": 1}
@@ -149,6 +154,8 @@ def init_db():
     for portal, code in DEFAULT_PASSCODES.items():
         cur.execute("SELECT 1 FROM rexvms_portal_passcodes WHERE portal = %s", (portal,))
         if not cur.fetchone():
+            if not code:
+                raise RuntimeError(f"No passcode stored for '{portal}' and no {portal.upper()}_PASSCODE env var set to seed it.")
             cur.execute(
                 "INSERT INTO rexvms_portal_passcodes (portal, passcode_hash) VALUES (%s, %s)",
                 (portal, generate_password_hash(code)),
