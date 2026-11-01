@@ -43,9 +43,6 @@ DEFAULT_PASSCODES = {
     "admin": os.environ.get("ADMIN_PASSCODE"),
 }
 
-DEFAULT_CONCURRENCY = {"security": 1, "frontdesk": 2, "admin": 1}
-MAX_CONCURRENCY_CEILING = 2
-
 VALID_PORTALS = {"security", "frontdesk", "admin"}
 
 app = Flask(__name__)
@@ -85,12 +82,6 @@ def init_db():
         );
     """)
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS rexvms_concurrency_limits (
-            portal TEXT PRIMARY KEY,
-            max_sessions INT NOT NULL DEFAULT 1
-        );
-    """)
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS rexvms_sessions (
@@ -159,15 +150,6 @@ def init_db():
             cur.execute(
                 "INSERT INTO rexvms_portal_passcodes (portal, passcode_hash) VALUES (%s, %s)",
                 (portal, generate_password_hash(code)),
-            )
-
-    # Seed default concurrency limits only if missing
-    for portal, limit in DEFAULT_CONCURRENCY.items():
-        cur.execute("SELECT 1 FROM rexvms_concurrency_limits WHERE portal = %s", (portal,))
-        if not cur.fetchone():
-            cur.execute(
-                "INSERT INTO rexvms_concurrency_limits (portal, max_sessions) VALUES (%s, %s)",
-                (portal, limit),
             )
 
     conn.commit()
@@ -244,19 +226,6 @@ def login():
     row = cur.fetchone()
     if not row or not check_password_hash(row["passcode_hash"], passcode):
         return jsonify({"error": "Incorrect passcode."}), 401
-
-    cur.execute("SELECT max_sessions FROM rexvms_concurrency_limits WHERE portal = %s", (portal,))
-    limit_row = cur.fetchone()
-    max_sessions = limit_row["max_sessions"] if limit_row else DEFAULT_CONCURRENCY.get(portal, 1)
-
-    cur.execute("SELECT COUNT(*) AS c FROM rexvms_sessions WHERE portal = %s AND active = TRUE", (portal,))
-    active_count = cur.fetchone()["c"]
-
-    if active_count >= max_sessions:
-        return jsonify({
-            "error": f"{portal.capitalize()} portal is at capacity ({max_sessions} active). "
-                     f"Ask an Admin to force-logout a stuck session if this seems wrong."
-        }), 423  # 423 Locked
 
     token = secrets.token_urlsafe(32)
     cur.execute(
@@ -602,36 +571,6 @@ def active_sessions():
     return jsonify(cur.fetchall())
 
 
-@app.route("/api/admin/sessions/<int:session_id>/force-logout", methods=["POST"])
-def force_logout(session_id):
-    if not require_admin():
-        return jsonify({"error": "Unauthorized"}), 401
-    db = get_db()
-    cur = db.cursor()
-    cur.execute("SELECT * FROM rexvms_sessions WHERE id = %s", (session_id,))
-    session = cur.fetchone()
-    if not session:
-        return jsonify({"error": "Session not found."}), 404
-    cur.execute("UPDATE rexvms_sessions SET active = FALSE WHERE id = %s", (session_id,))
-    # FIX: PostgreSQL doesn't support ORDER BY / LIMIT directly on UPDATE
-    # (that's MySQL syntax). Wrapped in a subquery instead — SELECT supports
-    # ORDER BY/LIMIT, so it picks the right row first, then UPDATE targets
-    # that row by id. This was silently breaking the whole request before,
-    # which also meant the "UPDATE rexvms_sessions SET active = FALSE" line above
-    # never actually committed either — the transaction failed and rolled
-    # back entirely, so the session was never really deactivated.
-    cur.execute("""
-        UPDATE rexvms_login_history SET logged_out_at = now()
-        WHERE id = (
-            SELECT id FROM rexvms_login_history
-            WHERE portal = %s AND display_name = %s AND logged_out_at IS NULL
-            ORDER BY logged_in_at DESC LIMIT 1
-        )
-    """, (session["portal"], session["display_name"]))
-    db.commit()
-    return jsonify({"ok": True})
-
-
 @app.route("/api/admin/login-history", methods=["GET"])
 def login_history():
     if not require_admin():
@@ -658,36 +597,6 @@ def change_passcode():
     cur.execute(
         "UPDATE rexvms_portal_passcodes SET passcode_hash=%s, updated_at=now() WHERE portal=%s",
         (generate_password_hash(new_passcode), portal),
-    )
-    db.commit()
-    return jsonify({"ok": True})
-
-
-@app.route("/api/admin/concurrency", methods=["GET"])
-def get_concurrency():
-    if not require_admin():
-        return jsonify({"error": "Unauthorized"}), 401
-    db = get_db()
-    cur = db.cursor()
-    cur.execute("SELECT * FROM rexvms_concurrency_limits")
-    return jsonify(cur.fetchall())
-
-
-@app.route("/api/admin/concurrency", methods=["POST"])
-def set_concurrency():
-    if not require_admin():
-        return jsonify({"error": "Unauthorized"}), 401
-    data = request.get_json(force=True) or {}
-    portal = data.get("portal")
-    max_sessions = data.get("maxSessions")
-    if portal not in VALID_PORTALS or not isinstance(max_sessions, int) or not (1 <= max_sessions <= MAX_CONCURRENCY_CEILING):
-        return jsonify({"error": f"maxSessions must be between 1 and {MAX_CONCURRENCY_CEILING}."}), 400
-
-    db = get_db()
-    cur = db.cursor()
-    cur.execute(
-        "UPDATE rexvms_concurrency_limits SET max_sessions=%s WHERE portal=%s",
-        (max_sessions, portal),
     )
     db.commit()
     return jsonify({"ok": True})
@@ -737,9 +646,8 @@ Visitor Management System. This portal has four sections:
 - Visitor Logs: the complete all-time visit history, loaded in batches of 20
   with a "Load more" button, searchable across the full history
 - Reports: export buttons for Daily/Monthly/Staff/Performance reports (PDF/Excel)
-- Session control: view who is logged into each portal right now, force-logout
-  a stuck session, change any portal's passcode, view login history, and
-  adjust each portal's concurrency limit (max 2 people at once per portal)
+- Session control: view who is logged into each portal right now, change any
+  portal's passcode, and view login history
 Answer only based on these actual features.
 """,
 }
