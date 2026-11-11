@@ -26,6 +26,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # ============================================================
 DATABASE_URL = os.environ.get("DATABASE_URL")
 MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY")
+MISTRAL_API_KEY_2 = os.environ.get("MISTRAL_API_KEY_2")  # optional backup key (separate free-tier account)
+# Keys in priority order; empty/missing ones are skipped. If one fails, the next is used instantly.
+MISTRAL_API_KEYS = [k for k in (MISTRAL_API_KEY, MISTRAL_API_KEY_2) if k]
+_preferred_key = 0  # index of the key that worked last, so a dead key isn't retried first every time
 MISTRAL_MODEL = "open-mistral-nemo"  # the only model that works for this app — not overridable via env
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN")
 
@@ -671,42 +675,67 @@ def ai_ask():
         return jsonify({"error": "Ask a question first."}), 400
     if len(question) > 500:
         return jsonify({"error": "Please keep your question under 500 characters."}), 400
-    if not MISTRAL_API_KEY:
+    if not MISTRAL_API_KEYS:
         return jsonify({"error": "AI guide isn't configured on the server yet (missing MISTRAL_API_KEY)."}), 503
 
-    try:
-        resp = requests.post(
-            "https://api.mistral.ai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {MISTRAL_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": MISTRAL_MODEL,
-                "messages": [
-                    {"role": "system", "content": GUIDE_CONTEXT[portal]},
-                    {"role": "user", "content": question},
-                ],
-                "max_tokens": 300,
-                "temperature": 0.3,
-            },
-            timeout=25,
-        )
+    global _preferred_key
+    payload = {
+        "model": MISTRAL_MODEL,
+        "messages": [
+            {"role": "system", "content": GUIDE_CONTEXT[portal]},
+            {"role": "user", "content": question},
+        ],
+        "max_tokens": 300,
+        "temperature": 0.3,
+    }
+
+    # Try each key in turn, starting with the one that worked last. A key that fails
+    # (rate limit, rejected, server error, timeout, network error) is skipped immediately —
+    # no cooldowns, no lockouts. The next request simply tries again.
+    count = len(MISTRAL_API_KEYS)
+    start = _preferred_key % count
+    last_error = ("The AI guide is temporarily unavailable.", 502)
+
+    for attempt in range(count):
+        idx = (start + attempt) % count
+        try:
+            resp = requests.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {MISTRAL_API_KEYS[idx]}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=25,
+            )
+        except requests.exceptions.Timeout:
+            last_error = ("The AI guide took too long to respond. Try again.", 504)
+            continue
+        except requests.exceptions.RequestException as e:
+            last_error = (f"AI guide is temporarily unavailable ({e.__class__.__name__}).", 502)
+            continue
+
         if resp.status_code in (401, 403):
-            return jsonify({"error": "The AI guide's API key was rejected. Check MISTRAL_API_KEY on the server."}), 502
+            last_error = ("The AI guide's API key was rejected. Check MISTRAL_API_KEY and MISTRAL_API_KEY_2 on the server.", 502)
+            continue
         if resp.status_code == 429:
-            return jsonify({"error": "The AI guide is busy right now. Try again in a moment."}), 503
-        resp.raise_for_status()
-        answer = (resp.json()["choices"][0]["message"]["content"] or "").strip()
+            last_error = ("The AI guide is busy right now. Try again in a moment.", 503)
+            continue
+        if not resp.ok:
+            last_error = (f"AI guide is temporarily unavailable (HTTP {resp.status_code}).", 502)
+            continue
+
+        try:
+            answer = (resp.json()["choices"][0]["message"]["content"] or "").strip()
+        except (KeyError, IndexError, ValueError):
+            return jsonify({"error": "The AI guide sent back an unexpected response."}), 502
         if not answer:
             return jsonify({"error": "The AI guide returned an empty answer. Try rephrasing."}), 502
+
+        _preferred_key = idx  # remember the working key
         return jsonify({"answer": answer})
-    except requests.exceptions.Timeout:
-        return jsonify({"error": "The AI guide took too long to respond. Try again."}), 504
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": f"AI guide is temporarily unavailable ({e.__class__.__name__})."}), 502
-    except (KeyError, IndexError, ValueError):
-        return jsonify({"error": "The AI guide sent back an unexpected response."}), 502
+
+    return jsonify({"error": last_error[0]}), last_error[1]
 
 
 # ============================================================
