@@ -26,7 +26,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # ============================================================
 DATABASE_URL = os.environ.get("DATABASE_URL")
 MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY")
-MISTRAL_MODEL = os.environ.get("MISTRAL_MODEL", "mistral-small-latest")
+MISTRAL_MODEL = "open-mistral-nemo"  # the only model that works for this app — not overridable via env
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN")
 
 if not DATABASE_URL:
@@ -608,54 +608,60 @@ def change_passcode():
 # (kept in GUIDE_CONTEXT below) so answers stay grounded to what the
 # software actually does, instead of the model guessing.
 # ============================================================
+SWITCH_NOTE = """
+- Switching portals: the top of the page (and the login screen) has links to the two other portals. Each portal has its own separate login and passcode; if the person is already logged in to that portal in this browser, they continue where they left off.
+- The round "?" button at the bottom-right opens this help guide."""
+
+GUIDE_RULES = """
+Rules:
+- Answer ONLY from the feature list above. Never invent buttons, menus, settings, reports or abilities that are not listed.
+- If the feature list does not cover the question, say you are not sure and suggest asking an administrator.
+- If the question is unrelated to using this portal, say you can only help with using this portal.
+- You cannot perform actions, look up real visitor data, or see the screen. You only explain how the portal works.
+- Keep answers short: 2-4 sentences, plain language. For how-to questions give the steps in order.
+- Do not use markdown headings.
+"""
+
 GUIDE_CONTEXT = {
     "security": """
-You are the in-app help assistant for the Security Portal of REX Insurance's
-Visitor Management System. This portal lets gate security staff:
-- View a table of all previously registered visitors (name, phone, ID type/number, date registered)
-- Search visitors by name, phone, or ID number
-- Click "Register Visitor" to add a brand-new visitor to the system
-- Click any visitor row to either "Log a New Visit" (records department, host,
-  purpose, check-in/out time — this is sent to Front Desk for approval) or
-  "View All Visits" (that visitor's full visit history)
-- Edit an existing visitor's stored details from the table
-Answer only based on these actual features. If asked about something this
-portal doesn't do (like approving visitors — that's Front Desk's job), say so
-plainly and point to the right portal.
-""",
+You are the in-app help assistant for the Security Portal of REX Insurance's Visitor Management System. Gate security staff use it. What the portal actually does:
+- Login: staff enter their name and the security passcode.
+- Registered Visitors table: every visitor ever registered (full name, phone number, ID type, ID number, date registered) with a record count.
+- Search box: filters the table by name, phone number, or ID number.
+- Register Visitor button: opens a form for a first-time visitor — full name (letters only; spaces, hyphens and apostrophes allowed), an 11-digit phone number, ID type (National ID (NIN), Driver's License, International Passport, or Voter's Card) and ID number.
+- Edit button on a row: updates that visitor's stored details.
+- Clicking a visitor row opens two choices: "Add New Visit" and "View All Visits".
+- Add New Visit: a form where Security picks Walk-in or Scheduled, chooses the department (Claims, Underwriting, Customer Relations, Finance, IT, Executive Office), and enters the host (the staff member being visited) and the purpose. The check-in time is recorded automatically on submit, and the visit goes to the Front Desk portal as Pending for approval.
+- View All Visits: that visitor's visit history (department, purpose, host, check-in, check-out, status). Check-out times are recorded by Front Desk, not Security.
+- Security cannot approve, reject, hold or check out visitors — that is done in the Front Desk portal.""" + SWITCH_NOTE + "\n" + GUIDE_RULES,
     "frontdesk": """
-You are the in-app help assistant for the Front Desk Portal of REX Insurance's
-Visitor Management System. This portal shows a live Visitor Status Board of
-everyone Security has checked in today. Front Desk staff:
-- See each visitor's status: Pending Review, Hold, Approved, With Host, Rejected, Checked Out
-- Click a visitor row to open actions valid for their current stage:
-  check host availability, then Accept / Reject / Hold on the host's behalf
-  (Front Desk calls or messages the host directly — there's no separate host login)
-- Mark a visitor "With Host" once they've reached the host's office
-- Check the visitor out once they leave
-- Filter the board by status and search by visitor or host name
-Answer only based on these actual features.
-""",
+You are the in-app help assistant for the Front Desk Portal of REX Insurance's Visitor Management System. What the portal actually does:
+- Login: staff enter their name and the front desk passcode.
+- Stat boxes at the top count today's visits that are Pending review, On hold, Approved, With host, and Rejected.
+- Visitor Status Board: every visit Security has logged today — visitor, department, host, appointment type (Walk-in or Scheduled), check-in time and status. It refreshes automatically, so no manual refresh is needed.
+- Filter tabs: All, Pending, Hold, Approved, With Host, Rejected, Checked Out. The search box finds a visitor or host by name.
+- Clicking a row opens the actions that are valid for that visit's current stage:
+  * Pending or Hold: Step 1 is "Host is available" or "Host is unavailable" (unavailable puts the visitor on Hold). If the host is available, Step 2 offers Accept (approves the visitor), Reject, or Hold (visitor waits a bit longer).
+  * Approved: "Mark as with host" once the visitor has reached the host's office.
+  * With Host: "Check out visitor" when the visitor leaves; the check-out time is recorded automatically.
+  * Rejected and Checked Out are final — no further actions.
+- The portal does not message the host itself: the Front Desk officer contacts the host directly (call or message) and then records the host's answer in the portal. Hosts have no login.
+- Front Desk cannot register visitors or log new visits — that is done in the Security portal.""" + SWITCH_NOTE + "\n" + GUIDE_RULES,
     "admin": """
-You are the in-app help assistant for the Admin Portal of REX Insurance's
-Visitor Management System. This portal has four sections:
-- Dashboard: visitor counts (today/month), who's currently inside, pending
-  approvals, a staff performance chart, and a recent activity feed
-- Users & Roles: a staff roster (name, role, active/suspended) — this is a
-  directory only, it is NOT connected to portal login
-- Visitor Logs: the complete all-time visit history, loaded in batches of 20
-  with a "Load more" button, searchable across the full history
-- Reports: export buttons for Daily/Monthly/Staff/Performance reports (PDF/Excel)
-- Session control: view who is logged into each portal right now, change any
-  portal's passcode, and view login history
-Answer only based on these actual features.
-""",
+You are the in-app help assistant for the Admin Portal of REX Insurance's Visitor Management System. What the portal actually does:
+- Login: staff enter their name and the admin passcode. A left menu has five sections:
+- Dashboard: counts for visitors today, currently inside (visits that are Approved or With host), pending approvals (Pending or On hold), and visitors this month; a Staff Performance bar chart (visits handled by each host in the last 7 days, top 5); and a Recent Activity feed of the latest visit events.
+- Users & Roles: a staff roster (name, role — Security Officer, Front Desk Officer or Admin — and Active/Suspended status). Admins can Add Staff Member and Suspend or Activate a person. It is a directory only and is NOT connected to portal login.
+- Visitor Logs: the complete all-time visit history (visitor, department, host, check-in, check-out, status), loaded 20 at a time with a "Load more" button. The search box searches visitor, host, or department across the full history.
+- Session Control: Active Sessions (who is logged in to which portal, when they logged in and when they were last seen), Passcodes (a "Change Passcode" button for the security, frontdesk and admin portals; at least 4 characters; the new passcode applies to the next login), and Login History (the 50 most recent logins and logouts).
+- Reports: four report cards (Daily Visitor Log, Monthly Visitor Count, Staff Visit Frequency, Security & Front Desk Performance), each with PDF and Excel buttons. IMPORTANT: report export is not built yet — the buttons only show a "demo only" message and do not produce a file. Say this plainly if asked about exporting or downloading reports, and suggest using the Visitor Logs search for now.
+- There is no force-logout button; admins can only view sessions.""" + SWITCH_NOTE + "\n" + GUIDE_RULES,
 }
 
 
 @app.route("/api/ai/ask", methods=["POST"])
 def ai_ask():
-    data = request.get_json(force=True) or {}
+    data = request.get_json(force=True, silent=True) or {}
     portal = data.get("portal")
     question = (data.get("question") or "").strip()
 
@@ -663,6 +669,8 @@ def ai_ask():
         return jsonify({"error": "Unknown portal."}), 400
     if not question:
         return jsonify({"error": "Ask a question first."}), 400
+    if len(question) > 500:
+        return jsonify({"error": "Please keep your question under 500 characters."}), 400
     if not MISTRAL_API_KEY:
         return jsonify({"error": "AI guide isn't configured on the server yet (missing MISTRAL_API_KEY)."}), 503
 
@@ -676,19 +684,29 @@ def ai_ask():
             json={
                 "model": MISTRAL_MODEL,
                 "messages": [
-                    {"role": "system", "content": GUIDE_CONTEXT[portal] + "\nKeep answers short — 2-4 sentences, plain language, no markdown headers."},
+                    {"role": "system", "content": GUIDE_CONTEXT[portal]},
                     {"role": "user", "content": question},
                 ],
                 "max_tokens": 300,
                 "temperature": 0.3,
             },
-            timeout=20,
+            timeout=25,
         )
+        if resp.status_code in (401, 403):
+            return jsonify({"error": "The AI guide's API key was rejected. Check MISTRAL_API_KEY on the server."}), 502
+        if resp.status_code == 429:
+            return jsonify({"error": "The AI guide is busy right now. Try again in a moment."}), 503
         resp.raise_for_status()
-        answer = resp.json()["choices"][0]["message"]["content"]
+        answer = (resp.json()["choices"][0]["message"]["content"] or "").strip()
+        if not answer:
+            return jsonify({"error": "The AI guide returned an empty answer. Try rephrasing."}), 502
         return jsonify({"answer": answer})
+    except requests.exceptions.Timeout:
+        return jsonify({"error": "The AI guide took too long to respond. Try again."}), 504
     except requests.exceptions.RequestException as e:
-        return jsonify({"error": f"AI guide is temporarily unavailable ({str(e)})."}), 502
+        return jsonify({"error": f"AI guide is temporarily unavailable ({e.__class__.__name__})."}), 502
+    except (KeyError, IndexError, ValueError):
+        return jsonify({"error": "The AI guide sent back an unexpected response."}), 502
 
 
 # ============================================================
